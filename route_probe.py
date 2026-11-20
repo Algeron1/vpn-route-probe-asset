@@ -124,11 +124,13 @@ def build_hysteria_client_config(socks_port: int, node: dict, password: str) -> 
 def spawn_xray(config: dict, workdir: Path):
     cfg_path = workdir / "config.json"
     cfg_path.write_text(json.dumps(config))
+    err_path = workdir / "client.stderr"
     proc = subprocess.Popen(
         [XRAY_BIN, "run", "-config", str(cfg_path)],
-        stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+        stdout=subprocess.DEVNULL, stderr=open(err_path, "wb"),
         start_new_session=True,
     )
+    proc.err_path = err_path
     return proc
 
 
@@ -149,11 +151,13 @@ def _hysteria_yaml(config: dict) -> str:
 def spawn_hysteria(config: dict, workdir: Path):
     cfg_path = workdir / "hysteria.yaml"
     cfg_path.write_text(_hysteria_yaml(config))
+    err_path = workdir / "client.stderr"
     proc = subprocess.Popen(
         [HYSTERIA_BIN, "client", "-c", str(cfg_path)],
-        stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+        stdout=subprocess.DEVNULL, stderr=open(err_path, "wb"),
         start_new_session=True,
     )
+    proc.err_path = err_path
     return proc
 
 
@@ -279,13 +283,19 @@ def probe_route(route_name: str, vpn_config: dict, secrets: dict) -> dict:
         try:
             ready = wait_for_socks(proc, socks_port)
             if ready != "ready":
-                return {"status": "error", "stage": ready, "bytes": 0, "ts": int(time.time())}
+                detail = ""
+                try:
+                    detail = proc.err_path.read_text(errors="replace").strip()[-300:]
+                except Exception:
+                    pass
+                return {"status": "error", "stage": ready, "bytes": 0, "ts": int(time.time()), "detail": detail}
             result = download_via_socks(socks_port)
         finally:
             kill_proc(proc)
 
     status = "ok" if result["stage"] == "ok" else "error"
-    return {"status": status, "stage": result["stage"], "bytes": result["bytes"], "ts": int(time.time())}
+    out = {"status": status, "stage": result["stage"], "bytes": result["bytes"], "ts": int(time.time())}
+    return out
 
 
 def main():
@@ -311,6 +321,8 @@ def main():
         results[route_name] = probe_route(route_name, vpn_config, secrets)
         r = results[route_name]
         print(f"{route_name}: {r['status']} ({r['stage']}, {r['bytes']} bytes)", file=sys.stderr)
+        if r.get("detail"):
+            print(f"  detail: {r['detail']}", file=sys.stderr)
 
     out = {"tag": args.tag, "ts": int(time.time()), "routes": results}
     print(json.dumps(out, indent=2))
