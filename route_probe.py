@@ -41,6 +41,13 @@ TEST_FILE_SIZE = 262144
 
 XRAY_BIN = os.environ.get("XRAY_BIN", "xray")
 HYSTERIA_BIN = os.environ.get("HYSTERIA_BIN", "hysteria")
+# Hysteria2 userpass auth is "username:password" -- which username depends on
+# which vantage point's dedicated test client this run uses (e.g. "_probe_test"
+# on Rifty itself, "_probe_home" on the home router); a wrong-but-plausible
+# username with the right password gets rejected and looks like a dead route
+# (confirmed 2026-11-20, found via the home router using _probe_home creds
+# against a hardcoded "_probe_test" login).
+PROBE_NAME = os.environ.get("PROBE_NAME", "_probe_test")
 
 
 def free_port() -> int:
@@ -106,7 +113,7 @@ def build_hysteria_client_config(socks_port: int, node: dict, password: str) -> 
     # 2026-11-20, see build_hysteria2_link's f"{name}:{uid}" pattern).
     cfg = {
         "server": f"{node['domain']}:{node['port']}",
-        "auth": f"_probe_test:{password}",
+        "auth": f"{PROBE_NAME}:{password}",
         "socks5": {"listen": f"127.0.0.1:{socks_port}"},
     }
     if node.get("obfs_password"):
