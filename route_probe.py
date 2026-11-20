@@ -232,6 +232,27 @@ def resolve_path(config: dict, dotted: str):
     return node
 
 
+def wait_for_socks(proc, socks_port: int, timeout: float = 8.0) -> str:
+    """Poll until the client's local SOCKS5 port accepts a connection, the
+    client process dies, or timeout elapses. A fixed sleep before checking
+    doesn't work for Hysteria2 -- its client only opens the SOCKS5 listener
+    *after* the QUIC handshake completes (unlike Xray's SOCKS inbound, which
+    binds immediately regardless of outbound state), so a slow handshake was
+    being misread as a dead route (confirmed 2026-11-20, found via the home
+    router: Reality/XHTTP always passed, Hysteria2 failed with
+    "connect_failed" even though the server itself was reachable)."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if proc.poll() is not None:
+            return "client_process_died"
+        try:
+            with socket.create_connection(("127.0.0.1", socks_port), timeout=0.5):
+                return "ready"
+        except OSError:
+            time.sleep(0.2)
+    return "socks_not_ready"
+
+
 def probe_route(route_name: str, vpn_config: dict, secrets: dict) -> dict:
     kind, builder, node_path, secret_key = ROUTE_BUILDERS[route_name]
     try:
@@ -249,9 +270,9 @@ def probe_route(route_name: str, vpn_config: dict, secrets: dict) -> dict:
         workdir = Path(workdir)
         proc = spawn_xray(client_config, workdir) if kind == "xray" else spawn_hysteria(client_config, workdir)
         try:
-            time.sleep(1.5)  # let the client establish/handshake before we hit it
-            if proc.poll() is not None:
-                return {"status": "error", "stage": "client_process_died", "bytes": 0, "ts": int(time.time())}
+            ready = wait_for_socks(proc, socks_port)
+            if ready != "ready":
+                return {"status": "error", "stage": ready, "bytes": 0, "ts": int(time.time())}
             result = download_via_socks(socks_port)
         finally:
             kill_proc(proc)
