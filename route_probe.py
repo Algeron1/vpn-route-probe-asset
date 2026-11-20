@@ -195,12 +195,18 @@ def download_via_socks(socks_port: int, timeout: float = 15.0) -> dict:
     try:
         proc = subprocess.run(
             [
-                curl_bin, "-s", "-o", tmp_path, "-w", "%{http_code}",
+                curl_bin, "-q",  # -q first: skip ~/.curlrc, which could set its own proxy/options
+                "-s", "-o", tmp_path, "-w", "%{http_code}",
                 "--socks5-hostname", f"127.0.0.1:{socks_port}",
+                "--noproxy", "",  # ignore NO_PROXY/http_proxy env vars -- without this, a stray
+                                  # env proxy can make curl silently bypass --socks5-hostname and
+                                  # succeed over the real network instead of the route under test,
+                                  # turning a dead route into a false "ok" (flagged by review, 2026-11-20)
                 "--max-time", str(timeout),
                 TEST_FILE_URL,
             ],
             capture_output=True, text=True, timeout=timeout + 5,
+            env={"PATH": os.environ.get("PATH", "/usr/bin:/bin")},  # strip proxy-related env vars too
         )
         http_code = proc.stdout.strip()
         size = os.path.getsize(tmp_path) if os.path.exists(tmp_path) else 0
@@ -318,7 +324,14 @@ def main():
 
     results = {}
     for route_name in routes:
-        results[route_name] = probe_route(route_name, vpn_config, secrets)
+        try:
+            results[route_name] = probe_route(route_name, vpn_config, secrets)
+        except Exception as e:
+            # A setup failure (e.g. missing client binary) shouldn't abort
+            # the whole --all run -- the remaining routes should still get
+            # checked (flagged by review, 2026-11-20: this exact exception
+            # class took down an entire run earlier today).
+            results[route_name] = {"status": "unknown", "stage": f"probe_crashed: {e}", "bytes": 0, "ts": int(time.time())}
         r = results[route_name]
         print(f"{route_name}: {r['status']} ({r['stage']}, {r['bytes']} bytes)", file=sys.stderr)
         if r.get("detail"):
