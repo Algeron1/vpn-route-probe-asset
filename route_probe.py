@@ -127,7 +127,7 @@ def spawn_xray(config: dict, workdir: Path):
     err_path = workdir / "client.stderr"
     proc = subprocess.Popen(
         [XRAY_BIN, "run", "-config", str(cfg_path)],
-        stdout=subprocess.DEVNULL, stderr=open(err_path, "wb"),
+        stdout=(errf := open(err_path, "wb")), stderr=errf,  # xray prints startup failures to stdout
         start_new_session=True,
     )
     proc.err_path = err_path
@@ -154,7 +154,7 @@ def spawn_hysteria(config: dict, workdir: Path):
     err_path = workdir / "client.stderr"
     proc = subprocess.Popen(
         [HYSTERIA_BIN, "client", "-c", str(cfg_path)],
-        stdout=subprocess.DEVNULL, stderr=open(err_path, "wb"),
+        stdout=(errf := open(err_path, "wb")), stderr=errf,  # xray prints startup failures to stdout
         start_new_session=True,
     )
     proc.err_path = err_path
